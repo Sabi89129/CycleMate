@@ -18,4 +18,4 @@ org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
 THUNDERFOREST_KEY=<add your key here>
 ```
 ### Thunderforest Key
-You get your Thunderforest key by creating an account here `https://www.thunderforest.com/docs/apikeys/` 
+Obtain a Thunderforest API key by creating an account and retrieving the key from your dashboard - for a detailed documentation check `https://www.thunderforest.com/docs/apikeys/`.
