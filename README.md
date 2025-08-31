@@ -2,7 +2,9 @@
 
 Android app for loading OCM and adding a "You-are-here-button".
 
-![Screenshot_20250831_173851](https://github.com/user-attachments/assets/59e23626-620d-45d3-8652-98a4959b7cb7)
+<a href="images/Screenshot.jpg">
+  <img src="images/Screenshot.jpg" alt="Screenshot" width="320">
+</a>
 
 ## SetUp
 Add gradle.properties:
