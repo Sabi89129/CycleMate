@@ -1,19 +1,21 @@
 package com.example.bikeplanner
 
 import android.Manifest
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.Location
+import androidx.compose.ui.platform.LocalContext
 import android.location.LocationListener
 import android.location.LocationManager
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -24,78 +26,90 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.PropertyFactory.*
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Point
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
+/*
+private val T.latitude: Double
+private val T.longitude: Double
+private val compose: Any
+private val compose: Any
+private val compose: Any
+*/
 @Composable
 fun BikeRoutingScreen() {
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    // 1. Definiere  Berechtigung und Standort
+    var locationPermissionGranted by remember { mutableStateOf(false) }
+    var currentLocation by remember { mutableStateOf<Location?>(null) }
+
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // 2. Erstelle einen Launcher für die Berechtigungsabfrage
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        locationPermissionGranted = isGranted
+    }
+
+    // 3. Starte die Abfrage, sobald das Composable aktiv wird
+    LaunchedEffect(Unit) {
+        // Starte die Berechtigungsabfrage, sobald die App sichtbar wird
+        locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+
+    // 4. Starte den Location Listener, wenn die Berechtigung erteilt wurde
+    DisposableEffect(locationPermissionGranted) {
+        if (locationPermissionGranted) {
+            val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val locationListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    // Update den Zustand mit der neuen Position
+                    currentLocation = location
+                }
+            }
+            try {
+                // Registriere den Listener für Standort-Updates
+                lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    2000L, 5f, locationListener
+                )
+            } catch (e: SecurityException) {
+                // Sollte nicht passieren, aber zur Sicherheit
+            }
+            onDispose {
+                // Bei Verlassen des Screens den Listener deregistrieren
+                lm.removeUpdates(locationListener)
+            }
+        } else {
+            onDispose {} // Nichts zu tun, wenn keine Berechtigung
+        }
+    }
 
     AndroidView(
-        modifier = Modifier,
         factory = { ctx: Context ->
             // MapLibre Instanz initialisieren
             MapLibre.getInstance(ctx)
-
-            // MapView erstellen und Lifecycle-Events hinzufügen
-            val mapView = MapView(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
-                onCreate(null)
-            }
 
             // IDs für die "Du bist hier"-Anzeige
             val hereSourceId = "here-src"
             val hereLayerId = "here-layer"
 
-            // Location Infrastruktur
-            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            var didCenterOnce = false
+            // MapView erstellen und Lifecycle-Events hinzufügen
+            MapView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+                onCreate(null)
 
-            // Helper: "You are here"-Punkt im Kartenstil aktualisieren
-            fun updateHere(style: Style, lat: Double, lon: Double) {
-                val src = style.getSourceAs<GeoJsonSource>(hereSourceId)
-                if (src != null) {
-                    src.setGeoJson(Point.fromLngLat(lon, lat))
-                }
-            }
+                // Karte asynchron laden und konfigurieren
+                getMapAsync { map: MapLibreMap ->
+                    map.setMinZoomPreference(2.0)
+                    map.setMaxZoomPreference(22.0)
 
-            // LocationListener, der bei Standortänderungen aufgerufen wird
-            val locationListener = object : LocationListener {
-                override fun onLocationChanged(loc: Location) {
-                    mapView.getMapAsync { map: MapLibreMap ->
-                        val style = map.style ?: return@getMapAsync
-                        updateHere(style, loc.latitude, loc.longitude)
-
-                        // Karte nur einmal auf den Standort zentrieren, um Wackeln zu vermeiden
-                        if (!didCenterOnce) {
-                            didCenterOnce = true
-                            map.cameraPosition = CameraPosition.Builder()
-                                .target(LatLng(loc.latitude, loc.longitude))
-                                .zoom(15.0)
-                                .build()
-                        }
-                    }
-                }
-            }
-
-            // Sicherstellen, dass die MapView-Lifecycle-Events mit dem Composable-Lifecycle synchronisiert werden
-            val observer = LifecycleEventObserver { _, e ->
-                when (e) {
-                    Lifecycle.Event.ON_START -> mapView.onStart()
-                    Lifecycle.Event.ON_RESUME -> mapView.onResume()
-                    Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                    Lifecycle.Event.ON_STOP -> mapView.onStop()
-                    Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
-                    else -> {}
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-
-            // Karte asynchron laden und konfigurieren
-            mapView.getMapAsync { map: MapLibreMap ->
-                map.setMinZoomPreference(2.0)
-                map.setMaxZoomPreference(22.0)
-
-                // Stil aus OpenCycleMap definieren
-                val ocmStyle = """
+                    // Stil aus OpenCycleMap definieren
+                    val ocmStyle = """
                     {
                     "version": 8,
                     "name": "OCM",
@@ -113,75 +127,58 @@ fun BikeRoutingScreen() {
                 }
                 """.trimIndent()
 
-                map.setStyle(Style.Builder().fromJson(ocmStyle)) { style ->
-                    // "You are here"-Quelle und -Layer anlegen (mit Dummy-Koordinaten)
-                    if (style.getSource(hereSourceId) == null) {
-                        style.addSource(
-                            GeoJsonSource(hereSourceId, Point.fromLngLat(0.0, 0.0))
-                        )
-                    }
-                    if (style.getLayer(hereLayerId) == null) {
-                        style.addLayer(
-                            CircleLayer(hereLayerId, hereSourceId).withProperties(
-                                circleColor("#2196F3"),
-                                circleRadius(6f),
-                                circleStrokeColor("#FFFFFF"),
-                                circleStrokeWidth(2f)
+                    map.setStyle(Style.Builder().fromJson(ocmStyle)) { style ->
+                        // "You are here"-Quelle und -Layer anlegen (mit Dummy-Koordinaten)
+                        if (style.getSource(hereSourceId) == null) {
+                            style.addSource(
+                                GeoJsonSource(hereSourceId, Point.fromLngLat(0.0, 0.0))
                             )
-                        )
-                    }
-                }
-            }
-
-            // Location-Updates sofort abonnieren, direkt im factory Block
-            // Überprüfen der Location-Berechtigungen
-            val fineGranted = ContextCompat.checkSelfPermission(
-                ctx, Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-            val coarseGranted = ContextCompat.checkSelfPermission(
-                ctx, Manifest.permission.ACCESS_COARSE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-
-            if (fineGranted || coarseGranted) {
-                // Updates abonnieren
-                try {
-                    lm.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
-                        2000L, 5f, locationListener
-                    )
-                } catch (_: SecurityException) {
-                    // Falls die Berechtigungen zur Laufzeit entzogen wurden
-                }
-
-                try {
-                    lm.requestLocationUpdates(
-                        LocationManager.NETWORK_PROVIDER,
-                        2000L, 5f, locationListener
-                    )
-                } catch (_: SecurityException) {
-                    // Falls die Berechtigungen zur Laufzeit entzogen wurden
-                }
-
-                // Optional: sofortiger Punkt mit LastKnownLocation
-                (lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER))?.let { last ->
-                    mapView.getMapAsync { map: MapLibreMap ->
-                        val style = map.style
-                        if (style != null) {
-                            updateHere(style, last.latitude, last.longitude)
-                            if (!didCenterOnce) {
-                                didCenterOnce = true
-                                map.cameraPosition = CameraPosition.Builder()
-                                    .target(LatLng(last.latitude, last.longitude))
-                                    .zoom(15.0)
-                                    .build()
-                            }
+                        }
+                        if (style.getLayer(hereLayerId) == null) {
+                            style.addLayer(
+                                CircleLayer(hereLayerId, hereSourceId).withProperties(
+                                    circleColor("#2196F3"),
+                                    circleRadius(6f),
+                                    circleStrokeColor("#FFFFFF"),
+                                    circleStrokeWidth(2f)
+                                )
+                            )
                         }
                     }
                 }
             }
-            mapView
         },
-        update = { /* Keine Updates hier nötig */ }
+        update = { mapView ->
+            // Dieser Block wird jedes Mal ausgeführt, wenn sich 'currentLocation' ändert
+            currentLocation?.let { loc ->
+                mapView.getMapAsync { map ->
+                    val style = map.style ?: return@getMapAsync
+
+                    // Definiere die IDs für Quelle und Layer hier, um sie im Lambda verfügbar zu machen
+                    val hereSourceId = "here-src"
+                    val hereLayerId = "here-layer"
+
+                    // Den GeoJson-Punkt auf der Karte aktualisieren
+                    val src = style.getSourceAs<GeoJsonSource>(hereSourceId)
+                    src?.setGeoJson(Point.fromLngLat(loc.longitude, loc.latitude))
+
+                    // Hier kommt die fehlende Zentrierlogik
+                    // Du brauchst eine Variable, die in einem übergeordneten Scope definiert ist
+                    // z.B. var didCenterOnce by remember { mutableStateOf(false) }
+
+                    var didCenterOnce = false
+                    if (!didCenterOnce) {
+                        didCenterOnce = true
+                        map.cameraPosition = CameraPosition.Builder()
+                            .target(LatLng(loc.latitude, loc.longitude))
+                            .zoom(15.0)
+                            .build()
+                    }
+                }
+            }
+        }
     )
+
+
+
 }
